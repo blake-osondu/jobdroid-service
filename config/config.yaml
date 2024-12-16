@@ -1,0 +1,192 @@
+# config/config.yaml
+
+# Application Settings
+app:
+  name: "Job Application Bot"
+  version: "1.0.0"
+  environment: "development"  # development, staging, production
+  debug: true
+
+# Bot Configuration
+bot:
+  # Browser Settings
+  browser:
+    type: "chrome"  # chrome, firefox
+    headless: true
+    user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    window_size:
+      width: 1920
+      height: 1080
+    
+  # Rate Limiting
+  rate_limits:
+    applications_per_day: 50
+    applications_per_hour: 10
+    delay_between_applications: 300  # seconds
+    random_delay_range:
+      min: 10
+      max: 30
+
+  # Job Search Settings
+  job_search:
+    max_pages_per_search: 5
+    search_frequency: 3600  # seconds
+    keywords_match_threshold: 0.8
+    excluded_keywords:
+      - "senior"
+      - "principal"
+      - "staff"
+    required_keywords:
+      - "software"
+      - "developer"
+      - "engineer"
+
+# Platform Settings
+platforms:
+  linkedin:
+    enabled: true
+    base_url: "https://www.linkedin.com"
+    api_version: "v2"
+    easy_apply_only: true
+    max_retries: 3
+    timeout: 30
+
+  indeed:
+    enabled: true
+    base_url: "https://www.indeed.com"
+    quick_apply_only: true
+    max_retries: 3
+    timeout: 30
+
+# Proxy Configuration
+proxy:
+  enabled: true
+  max_fails: 3
+  rotation_interval: 600  # seconds
+  test_urls:
+    - "https://api.ipify.org?format=json"
+    - "https://httpbin.org/ip"
+  proxy_list:
+    - host: "proxy1.example.com"
+      port: 8080
+      protocol: "http"
+      username: "${PROXY_USER}"  # Environment variable
+      password: "${PROXY_PASS}"  # Environment variable
+    - host: "proxy2.example.com"
+      port: 8080
+      protocol: "http"
+
+# Authentication
+auth:
+  linkedin:
+    client_id: "${LINKEDIN_CLIENT_ID}"
+    client_secret: "${LINKEDIN_CLIENT_SECRET}"
+    redirect_uri: "http://localhost:8000/callback"
+    scopes:
+      - "r_liteprofile"
+      - "r_emailaddress"
+      - "w_member_social"
+
+  indeed:
+    api_key: "${INDEED_API_KEY}"
+    secret_key: "${INDEED_SECRET_KEY}"
+
+# Form Detection
+form_detection:
+  confidence_threshold: 0.8
+  required_fields:
+    - name
+    - email
+    - resume
+  field_patterns:
+    name: 
+      - "(?i)full.*name"
+      - "(?i)first.*name"
+    email:
+      - "(?i)email"
+      - "(?i)e-mail"
+    phone:
+      - "(?i)phone"
+      - "(?i)mobile"
+    resume:
+      - "(?i)resume"
+      - "(?i)cv"
+      - "(?i)upload"
+
+# Resume Settings
+resume:
+  formats:
+    - "pdf"
+    - "docx"
+  max_size: 5242880  # 5MB
+  parsing:
+    enabled: true
+    confidence_threshold: 0.9
+
+# Error Handling
+error_handling:
+  max_retries: 3
+  retry_delay: 5  # seconds
+  exponential_backoff: true
+  alert_on_errors: true
+
+# Logging
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file:
+    enabled: true
+    path: "logs/application_bot.log"
+    max_size: 10485760  # 10MB
+    backup_count: 5
+  sentry:
+    enabled: false
+    dsn: "${SENTRY_DSN}"
+
+# Monitoring
+monitoring:
+  enabled: true
+  metrics:
+    - applications_submitted
+    - success_rate
+    - average_time_per_application
+    - error_rate
+  alert_thresholds:
+    error_rate: 0.2
+    success_rate: 0.7
+
+# Storage
+storage:
+  type: "postgresql"  # postgresql, mysql, sqlite
+  connection:
+    host: "${DB_HOST}"
+    port: "${DB_PORT}"
+    database: "${DB_NAME}"
+    user: "${DB_USER}"
+    password: "${DB_PASSWORD}"
+
+# Security
+security:
+  encryption_key: "${ENCRYPTION_KEY}"
+  ssl_verify: true
+  allowed_domains:
+    - "linkedin.com"
+    - "indeed.com"
+    - "greenhouse.io"
+    - "lever.co"
+  blocked_domains:
+    - "scam-jobs.com"
+
+# API Settings
+api:
+  host: "0.0.0.0"
+  port: 8000
+  base_path: "/api/v1"
+  cors:
+    enabled: true
+    allowed_origins:
+      - "http://localhost:3000"
+      - "https://yourdomain.com"
+  rate_limit:
+    enabled: true
+    requests_per_minute: 60
