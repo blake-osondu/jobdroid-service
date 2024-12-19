@@ -5,6 +5,15 @@ from typing import Dict
 from src.bot.parsers.base import BaseParser
 from src.utils.proxy import ProxyRotator
 from src.bot.automation.session import AutomationSession
+import os
+import sys
+from pathlib import Path
+
+# Add the src directory to Python path
+src_path = str(Path(__file__).parent.parent / "src")
+sys.path.append(src_path)
+
+from bot.parsers.base import BaseParser
 
 @pytest.fixture
 def config() -> Dict:

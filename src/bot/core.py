@@ -4,12 +4,12 @@ from dataclasses import dataclass
 import asyncio
 import logging
 from datetime import datetime
-from .parsers.indeed import IndeedParser
-from .parsers.linkedin import LinkedInParser
-from .automation.session import AutomationSession
-from .ml.form_detector import FormDetector
-from ..utils.proxy import ProxyRotator
-from ..utils.logger import JobBotLogger
+from bot.parsers.indeed import IndeedParser
+from bot.parsers.linkedin import LinkedInParser
+from bot.automation.session import AutomationSession
+from bot.ml.form_detector import FormDetector, FormField
+from utils.proxy import ProxyRotator
+from utils.logger import JobBotLogger
 
 @dataclass
 class ApplicationResult:
@@ -20,28 +20,28 @@ class ApplicationResult:
     position: str
     applied_at: datetime
     error: Optional[str] = None
+    form_fields: Optional[Dict[str, List[FormField]]] = None
 
 class JobApplicationBot:
     def __init__(self, config: Dict):
         """Initialize the job application bot with configuration"""
         self.config = config
-        self.logger = JobBotLogger(__name__)
-        self.proxy_rotator = ProxyRotator()
+        self.logger = logging.getLogger(__name__)
         self.form_detector = FormDetector()
-        
-        # Initialize platform parsers
-        self.parsers = {
-            'linkedin': LinkedInParser(config['platforms']['linkedin']),
-            'indeed': IndeedParser(config['platforms']['indeed'])
-        }
+        self.session = None
         
         # Track application statistics
         self.stats = {
             'total_attempts': 0,
             'successful': 0,
             'failed': 0,
-            'errors': []
+            'errors': [],
+            'forms_detected': 0,
+            'fields_detected': 0
         }
+        
+        # Initialize parsers only when needed
+        self._parsers = {}
 
     async def initialize(self) -> bool:
         """Initialize bot components and connections"""
@@ -114,12 +114,7 @@ class JobApplicationBot:
     async def _process_job_application(self, job: Dict) -> ApplicationResult:
         """Process a single job application"""
         try:
-            # Get working proxy
-            proxy = await self.proxy_rotator.get_working_proxy()
-            if proxy:
-                self.session.update_proxy(proxy)
-            
-            # Initialize application result
+            # Initialize result
             result = ApplicationResult(
                 job_id=job['id'],
                 status='pending',
@@ -129,20 +124,29 @@ class JobApplicationBot:
                 applied_at=datetime.now()
             )
             
-            # Navigate to job page
-            if not await self.session.navigate_to_job(job['url']):
-                raise Exception("Failed to navigate to job page")
+            # Get page content
+            page_source = await self.session.get_page_source()
             
-            # Detect and fill application form
-            form_fields = await self.form_detector.detect_fields(
-                await self.session.get_page_source()
-            )
+            # Detect form fields
+            detected_forms = await self.form_detector.detect_fields(page_source)
             
-            if not form_fields:
+            if not detected_forms:
                 raise Exception("No application form detected")
             
-            # Fill and submit application
-            if await self.session.fill_application_form(form_fields):
+            # Update stats
+            self.stats['forms_detected'] += len(detected_forms)
+            for form in detected_forms:
+                self.stats['fields_detected'] += (
+                    len(form['required_fields']) + 
+                    len(form['optional_fields']) + 
+                    len(form['file_uploads'])
+                )
+            
+            # Store detected fields in result
+            result.form_fields = detected_forms[0]  # Use first form for now
+            
+            # Attempt to fill the form
+            if await self._fill_application_form(result.form_fields):
                 result.status = 'success'
                 self.stats['successful'] += 1
             else:
@@ -163,6 +167,90 @@ class JobApplicationBot:
                 applied_at=datetime.now(),
                 error=str(e)
             )
+
+    async def _fill_application_form(self, form_fields: Dict[str, List[FormField]]) -> bool:
+        """Fill out the detected application form"""
+        try:
+            # Handle required fields first
+            for field in form_fields['required_fields']:
+                if not await self._fill_field(field):
+                    self.logger.error(f"Failed to fill required field: {field.name}")
+                    return False
+            
+            # Handle optional fields
+            for field in form_fields['optional_fields']:
+                try:
+                    await self._fill_field(field)
+                except Exception as e:
+                    self.logger.warning(f"Failed to fill optional field {field.name}: {e}")
+            
+            # Handle file uploads
+            for field in form_fields['file_uploads']:
+                if 'resume' in field.name.lower():
+                    if not await self._upload_resume(field):
+                        return False
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Form filling failed: {e}")
+            return False
+
+    async def _fill_field(self, field: FormField) -> bool:
+        """Fill a single form field based on its type and purpose"""
+        try:
+            # Get field value from user profile
+            value = self._get_field_value(field)
+            
+            # Fill the field using automation session
+            await self.session.fill_field(
+                field_name=field.name,
+                field_type=field.field_type,
+                value=value
+            )
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to fill field {field.name}: {e}")
+            return False
+
+    def _get_field_value(self, field: FormField) -> str:
+        """Get the appropriate value for a form field"""
+        # This would come from user profile/preferences
+        field_mapping = {
+            'name': 'John Doe',
+            'email': 'john.doe@example.com',
+            'phone': '123-456-7890',
+            'experience': '3-5',
+            'education': "Bachelor's Degree"
+        }
+        
+        # Try to match field purpose to value
+        for purpose, patterns in self.form_detector.common_field_patterns.items():
+            if any(pattern in field.name.lower() for pattern in patterns):
+                return field_mapping.get(purpose, '')
+        
+        return ''
+
+    async def _upload_resume(self, field: FormField) -> bool:
+        """Upload resume to a file upload field"""
+        try:
+            resume_path = self.config.get('resume_path')
+            if not resume_path:
+                self.logger.error("No resume path configured")
+                return False
+            
+            await self.session.upload_file(
+                field_name=field.name,
+                file_path=resume_path
+            )
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Resume upload failed: {e}")
+            return False
 
     def _filter_jobs(self, jobs: List[Dict], preferences: Dict) -> List[Dict]:
         """Filter jobs based on user preferences"""
@@ -233,11 +321,14 @@ class JobApplicationBot:
 
     def get_stats(self) -> Dict:
         """Get current application statistics"""
-        return {
+        stats = {
             **self.stats,
             'success_rate': self.stats['successful'] / self.stats['total_attempts'] 
-                          if self.stats['total_attempts'] > 0 else 0
+                          if self.stats['total_attempts'] > 0 else 0,
+            'average_fields_per_form': self.stats['fields_detected'] / self.stats['forms_detected']
+                                     if self.stats['forms_detected'] > 0 else 0
         }
+        return stats
 
     async def cleanup(self) -> None:
         """Cleanup resources"""

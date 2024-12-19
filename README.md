@@ -47,7 +47,11 @@ Installation
    .\venv\Scripts\activate   # Windows
 
 3. Install dependencies:
-   pip install -r requirements.txt
+  pip install -r requirements.txt 
+  # Use --prefer-binary to use pre-built packages when available
+  pip install -r requirements.txt --prefer-binary
+  # User minimal requirements.txt to install without ml features
+  pip install -r minimal-requirements.txt
 
 4. Configure the application:
    cp config/config.example.yaml config/config.yaml
@@ -87,6 +91,15 @@ python src/main.py --debug
 
 # Custom config
 python src/main.py --config /path/to/config.yaml
+
+#Commands to stop the server
+  # On Mac/Linux
+  lsof -i :8001
+  # Find the PID (process ID) and kill it
+  kill -9 <PID>
+  # OR more directly
+  pkill -f uvicorn
+
 
 API Endpoints:
 

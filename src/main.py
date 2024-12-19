@@ -7,7 +7,7 @@ from typing import Dict, Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-
+import uvicorn
 from bot.core import JobApplicationBot
 from api.models import (
     UserProfile, 
@@ -187,31 +187,48 @@ async def cleanup():
         except Exception as e:
             logger.error(f"Failed to cleanup bot for user {user_id}: {e}")
 
+@app.get("/")
+async def root():
+    return {"message": "Job Application Bot API is running"}
+
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "healthy",
+        "version": "1.0.0"
+    }
+
 if __name__ == "__main__":
-    # Parse arguments
-    args = parse_arguments()
-    
-    # Configure logging
-    logging_level = logging.DEBUG if args.debug else logging.INFO
-    logging.basicConfig(level=logging_level)
-    
-    # Load configuration
-    config = load_config()
-    
-    # Start server
-    import uvicorn
+    print("Starting application...")
     
     try:
-        uvicorn.run(
-            "main:app",
-            host=config['api']['host'],
-            port=config['api']['port'],
-            reload=args.debug,
-            log_level="debug" if args.debug else "info"
+        # Parse arguments
+        args = parse_arguments()
+        print(f"Debug mode: {args.debug}")
+        
+        # Configure logging
+        logging_level = logging.DEBUG if args.debug else logging.INFO
+        logging.basicConfig(
+            level=logging_level,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
-    except KeyboardInterrupt:
-        # Cleanup on shutdown
-        asyncio.run(cleanup())
+        
+        print("Loading configuration...")
+        config = load_config()
+        print("Configuration loaded successfully")
+        
+        print("Starting server on http://127.0.0.1:8001")
+        
+        # Modified uvicorn configuration
+        uvicorn.run(
+            app,                # Direct app instance instead of string
+            host="127.0.0.1",
+            port=8001,
+            reload=False,       # Disabled reload
+            log_level="debug",
+            workers=1
+        )
+        
     except Exception as e:
-        logger.error(f"Server failed to start: {e}")
+        print(f"Error starting server: {str(e)}")
         raise

@@ -7,7 +7,8 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from bs4 import BeautifulSoup
 import time
 import random
-from .base import BaseParser, JobPosting
+from .base import BaseParser
+from ..models.job_posting import JobPosting
 
 class IndeedParser(BaseParser):
     def __init__(self, config: dict):
@@ -169,15 +170,78 @@ class IndeedParser(BaseParser):
         
     def _extract_salary(self, soup) -> Optional[tuple]:
         """
-        Extract salary information
+        Extract salary information from Indeed job posting
+        Returns tuple of (min_salary, max_salary, period) or None if not found
+        period can be 'year', 'month', 'week', 'hour'
         """
-        salary_element = soup.find(class_='jobsearch-JobMetadataHeader-item')
-        if salary_element and '$' in salary_element.text:
-            # Parse salary range
-            salary_text = salary_element.text
-            # Add salary parsing logic here
+        try:
+            salary_element = soup.find(class_='jobsearch-JobMetadataHeader-item')
+            if not salary_element or '$' not in salary_element.text:
+                return None
+
+            salary_text = salary_element.text.strip().lower()
+            
+            # Remove common prefixes
+            salary_text = salary_text.replace('estimated', '').replace('salary', '').strip()
+            
+            # Determine period
+            period = 'year'  # default
+            if 'hour' in salary_text or '/hr' in salary_text:
+                period = 'hour'
+            elif 'month' in salary_text:
+                period = 'month'
+            elif 'week' in salary_text:
+                period = 'week'
+                
+            # Extract numbers
+            import re
+            numbers = re.findall(r'\$[\d,]+(?:\.\d{2})?', salary_text)
+            if not numbers:
+                return None
+                
+            # Convert string numbers to float
+            amounts = []
+            for num in numbers:
+                # Remove $ and commas, convert to float
+                amount = float(num.replace('$', '').replace(',', ''))
+                amounts.append(amount)
+                
+            if len(amounts) == 0:
+                return None
+            elif len(amounts) == 1:
+                # Single value - use as both min and max
+                return (amounts[0], amounts[0], period)
+            else:
+                # Range - use min and max values
+                return (min(amounts), max(amounts), period)
+                
+        except Exception as e:
+            self.logger.error(f"Error parsing salary: {e}")
             return None
-        return None
+
+    def _normalize_salary(self, salary_tuple: Optional[tuple]) -> Optional[tuple]:
+        """
+        Normalize salary to yearly amount
+        Returns (min_yearly, max_yearly) or None
+        """
+        if not salary_tuple:
+            return None
+            
+        min_amount, max_amount, period = salary_tuple
+        
+        # Convert to yearly based on period
+        multipliers = {
+            'hour': 2080,  # 40 hours/week * 52 weeks
+            'week': 52,
+            'month': 12,
+            'year': 1
+        }
+        
+        multiplier = multipliers.get(period, 1)
+        return (
+            min_amount * multiplier,
+            max_amount * multiplier
+        )
         
     async def _wait_for_elements(self, class_name: str, timeout: int = 10):
         """
@@ -193,9 +257,103 @@ class IndeedParser(BaseParser):
     def _matches_criteria(self, job: JobPosting, criteria: dict) -> bool:
         """
         Check if job matches search criteria
+        Returns True if job matches all specified criteria, False otherwise
         """
-        # Add matching logic here
-        return True
+        try:
+            # Basic validation first
+            if not self.validate_posting(vars(job)):
+                return False
+            
+            # Title and description matching for keywords
+            if 'keywords' in criteria:
+                keywords = criteria['keywords'].lower().split()
+                searchable_text = f"{job.title} {job.description}".lower()
+                if not all(keyword in searchable_text for keyword in keywords):
+                    return False
+            
+            # Location matching
+            if 'location' in criteria:
+                # Handle remote positions
+                if 'remote' in criteria['location'].lower():
+                    if not ('remote' in job.location.lower() or 'remote' in job.title.lower()):
+                        return False
+                # Handle regular locations
+                elif not any(loc.lower() in job.location.lower() 
+                           for loc in criteria['location'].split(',')):
+                    return False
+            
+            # Salary range matching
+            if 'salary_range' in criteria and job.salary_range:
+                min_desired, max_desired = criteria['salary_range']
+                min_actual, max_actual = self._normalize_salary(job.salary_range)
+                
+                # Check if salary ranges overlap
+                if max_actual < min_desired or min_actual > max_desired:
+                    return False
+            
+            # Experience level matching
+            if 'experience_level' in criteria:
+                exp_level = criteria['experience_level'].lower()
+                description_lower = job.description.lower()
+                
+                experience_patterns = {
+                    'entry': ['entry level', 'junior', '0-2 years', 'no experience'],
+                    'mid': ['mid level', 'intermediate', '2-5 years', '3-5 years'],
+                    'senior': ['senior', 'lead', '5+ years', '7+ years'],
+                    'executive': ['executive', 'director', 'head of', 'vp', 'chief']
+                }
+                
+                if not any(pattern in description_lower 
+                          for pattern in experience_patterns.get(exp_level, [])):
+                    return False
+            
+            # Job type matching (full-time, part-time, contract)
+            if 'job_type' in criteria:
+                job_type = criteria['job_type'].lower()
+                if job_type not in job.title.lower() and job_type not in job.description.lower():
+                    return False
+            
+            # Company type/industry matching
+            if 'industry' in criteria:
+                industries = [ind.lower() for ind in criteria['industry'].split(',')]
+                if not any(ind in job.description.lower() for ind in industries):
+                    return False
+            
+            # Required skills matching
+            if 'required_skills' in criteria:
+                required_skills = [skill.lower() for skill in criteria['required_skills']]
+                job_text = f"{job.title} {job.description}".lower()
+                if not all(skill in job_text for skill in required_skills):
+                    return False
+            
+            # Education requirements matching
+            if 'education' in criteria:
+                education_level = criteria['education'].lower()
+                education_patterns = {
+                    'high school': ['high school', 'ged'],
+                    'associate': ['associate', 'associate\'s', '2 year degree'],
+                    'bachelor': ['bachelor', 'bachelor\'s', '4 year degree', 'bs', 'ba'],
+                    'master': ['master', 'master\'s', 'ms', 'ma'],
+                    'phd': ['phd', 'doctorate', 'doctoral']
+                }
+                
+                if not any(pattern in job.description.lower() 
+                          for pattern in education_patterns.get(education_level, [])):
+                    return False
+            
+            # Posted date matching
+            if 'posted_within_days' in criteria and hasattr(job, 'posted_date'):
+                from datetime import datetime, timedelta
+                max_age = timedelta(days=criteria['posted_within_days'])
+                if datetime.now() - job.posted_date > max_age:
+                    return False
+            
+            # If all criteria matched (or no criteria specified)
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error in _matches_criteria: {e}")
+            return False
         
     def cleanup(self):
         """
@@ -203,3 +361,14 @@ class IndeedParser(BaseParser):
         """
         if self.driver:
             self.driver.quit()
+
+    def validate_posting(self, posting) -> bool:
+        """
+        Validate if a job posting meets the criteria
+        """
+        try:
+            required_fields = ['title', 'company', 'location']
+            return all(posting.get(field) for field in required_fields)
+        except Exception as e:
+            self.logger.error(f"Error validating posting: {e}")
+            return False

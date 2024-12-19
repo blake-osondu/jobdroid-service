@@ -9,7 +9,7 @@ from typing import Optional, Dict
 import random
 import time
 import logging
-from ..utils.proxy import ProxyRotator
+from src.utils.proxy import ProxyRotator
 
 class AutomationSession:
     def __init__(self, config: Dict):
